@@ -1,0 +1,8 @@
+config.py
+*.session
+*.session-journal
+*.json
+__pycache__/
+*.pyc
+*.pyo
+custom_message.txt
