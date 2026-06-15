@@ -1,7 +1,12 @@
 # Multi-Stream Signal Monitor
 
+I built this while running a live signal operation across multiple Telegram channels. 
+Standard monitoring scripts kept failing on edge cases I kept hitting in production — 
+so I designed one that handled all of them.
+
 Most monitoring tools break when the signal gets noisy.
 This one was built specifically for that.
+Built to run 24/7 in production — not a script you babysit.
 
 ---
 
@@ -48,68 +53,39 @@ That's not a standard pattern. That's problem-specific logic built from scratch.
 
 ## Architecture
 
+```
 3 Live Telegram Streams
-
-│
-
-▼
-
-Async Event Loop (Telethon)
-
-│
-
-▼
-
-Signal Extractor (Regex)
-
-├── Solana address pattern
-
-└── TRON address pattern
-
-│
-
-▼
-
-Deduplication Check (JSON persistent store)
-
-│
-
-┌────┴────┐
-
-│         │
-
+        │
+        ▼
+  Async Event Loop (Telethon)
+        │
+        ▼
+  Signal Extractor (Regex)
+  ├── Solana address pattern
+  └── TRON address pattern
+        │
+        ▼
+  Deduplication Check (JSON persistent store)
+        │
+   ┌────┴────┐
+   │         │
 Anonymous  Verified
-
 Source     Source
-
-│         │
-
+   │         │
 5-msg      Direct
-
 window     forward
-
 check         │
-
-│         │
-
-└────┬────┘
-
-▼
-
-Multi-Target Router
-
-├── Target A (Solana)
-
-├── Target B (formatted broadcast)
-
-└── Target C (TRON)
-
-│
-
-▼
-
-Persistent State Save
-
+   │         │
+   └────┬────┘
+        ▼
+  Multi-Target Router
+  ├── Target A (Solana)
+  ├── Target B (formatted broadcast)
+  └── Target C (TRON)
+        │
+        ▼
+  Persistent State Save
+```
 ---
 
 ## Tech Stack
@@ -174,8 +150,7 @@ Hosted on an AWS EC2 instance (Ubuntu Linux) , ( Or You can use EC2 Windows/Mac 
 - Deduplication across sessions is a different problem from deduplication within a session.
 - Real-world data streams are noisy — pattern matching needs to be specific enough to avoid false positives and general enough to catch valid signals.
 - Reconnection logic is not optional in production — networks fail.
-- Money can be made from automation , just using a bit of critical thinking and with an edge ( better if the edge desgined from scratch by yourself ).
-
+- The edge in any automation system isn't the code — it's the problem-specific logic nobody else thought to build.
 ---
 
 *Built by Theperspicacious( S.M ) — [github.com/ThePerspicacious](https://github.com/ThePerspicacious)*
