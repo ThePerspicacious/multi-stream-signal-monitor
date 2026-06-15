@@ -1,0 +1,201 @@
+import re
+import asyncio
+from telethon import TelegramClient, events
+import emoji
+import os
+import json
+import time
+
+# ─────────────────────────────────────────
+# Load config — copy config.example.py to
+# config.py and fill in your values
+# ─────────────────────────────────────────
+from config import (
+    API_ID, API_HASH, PHONE_NUMBER,
+    PRIVATE_CHANNEL_ID, LINKED_GROUP_ID, PUBLIC_CHANNEL_ID,
+    TARGET_SOLANA_BOT, TARGET_TRON_BOT, TARGET_BROADCAST,
+    REFERRAL_LINK_BASE, CUSTOM_MESSAGE_FILE
+)
+
+session_name = f'session_{PRIVATE_CHANNEL_ID}'
+
+def get_processed_items_filename():
+    return 'processed_signals.json'
+
+def load_processed_items(filename):
+    if os.path.exists(filename):
+        try:
+            with open(filename, 'r') as file:
+                return set(json.load(file))
+        except json.JSONDecodeError:
+            print(f"Error decoding JSON from file: {filename}. Returning empty set.")
+            return set()
+    return set()
+
+def save_processed_items(filename, processed_items):
+    retries = 5
+    while retries > 0:
+        try:
+            with open(filename, 'w') as file:
+                json.dump(list(processed_items), file)
+            return
+        except (IOError, OSError) as e:
+            print(f"Error saving processed items: {e}")
+            print("Retrying in 5 seconds...")
+            time.sleep(5)
+            retries -= 1
+
+def extract_contract_address(message):
+    parts = message.split("\n")
+    part1, part2 = None, None
+    for part in parts:
+        if "1ST PART OF THE LINK" in part:
+            match = re.search(r'https://\S+', part)
+            if match:
+                part1 = match.group(0)
+        elif "2ND PART OF THE LINK" in part:
+            match = re.search(r'\S+', part)
+            if match:
+                part2 = match.group(0)
+    if part1 and part2:
+        part2 = ''.join([char for char in part2 if char not in emoji.EMOJI_DATA])
+        return part1 + part2
+    return None
+
+def extract_solana_address(message):
+    pattern = re.compile(r'\b[1-9A-HJ-NP-Za-km-z]{32,44}\b')
+    match = pattern.findall(message)
+    if match:
+        return match[0]
+    return None
+
+async def get_channel_name(client, channel_id):
+    try:
+        entity = await client.get_entity(channel_id)
+        return entity.title or entity.username or str(channel_id)
+    except Exception as e:
+        print(f"Failed to get name for channel {channel_id}: {e}")
+        return str(channel_id)
+
+async def get_user_info(client, user_id):
+    try:
+        user = await client.get_entity(user_id)
+        return user.bot, user.username
+    except Exception as e:
+        print(f"Failed to get info for user {user_id}: {e}")
+        return False, None
+
+async def get_user_role(client, chat_id, user_id):
+    try:
+        chat_member = await client.get_chat_member(chat_id, user_id)
+        return chat_member.rank or ''
+    except Exception as e:
+        print(f"Failed to get role for user {user_id} in chat {chat_id}: {e}")
+        return ''
+
+async def scan_channel_history(client, channel_id, processed_items):
+    count = 0
+    channel_name = await get_channel_name(client, channel_id)
+    async for message in client.iter_messages(channel_id):
+        if message.message:
+            solana_address = extract_solana_address(message.message)
+            if solana_address and solana_address not in processed_items:
+                processed_items.add(solana_address)
+                count += 1
+                save_processed_items(get_processed_items_filename(), processed_items)
+    print(f"Scan for {channel_name} completed. Processed items: {count}")
+    return count
+
+async def main():
+    start_time, stop_time = None, None
+    message_sent = False
+    last_private_message_without_address = None
+
+    custom_message = ''
+    if os.path.exists(CUSTOM_MESSAGE_FILE):
+        with open(CUSTOM_MESSAGE_FILE, 'r', encoding='utf-8') as file:
+            custom_message = file.read().strip()
+
+    while True:
+        try:
+            client = TelegramClient(session_name, API_ID, API_HASH)
+            await client.start(PHONE_NUMBER)
+            print("Bot started")
+
+            filename = get_processed_items_filename()
+            processed_items = load_processed_items(filename)
+            print(f"Loaded {len(processed_items)} processed items from file.")
+
+            print("Starting initial scan of all channels...")
+            await scan_channel_history(client, PRIVATE_CHANNEL_ID, processed_items)
+            await scan_channel_history(client, LINKED_GROUP_ID, processed_items)
+            await scan_channel_history(client, PUBLIC_CHANNEL_ID, processed_items)
+
+            @client.on(events.NewMessage(chats=[PRIVATE_CHANNEL_ID, LINKED_GROUP_ID, PUBLIC_CHANNEL_ID]))
+            async def message_handler(event):
+                nonlocal start_time, stop_time, message_sent, last_private_message_without_address
+                message_text = event.message.message
+                user_id = event.message.from_id
+                chat_id = event.chat_id
+
+                if message_text:
+                    is_bot, username = await get_user_info(client, user_id)
+                    role = await get_user_role(client, chat_id, user_id)
+
+                    if chat_id in [PRIVATE_CHANNEL_ID, PUBLIC_CHANNEL_ID]:
+                        solana_address = extract_solana_address(message_text)
+                        if solana_address and solana_address not in processed_items:
+                            processed_items.add(solana_address)
+                            save_processed_items(filename, processed_items)
+
+                            await client.send_message(TARGET_SOLANA_BOT, solana_address, link_preview=False)
+                            await client.send_message(TARGET_TRON_BOT, solana_address, link_preview=False)
+
+                            link = f"{REFERRAL_LINK_BASE}{solana_address}"
+                            formatted_message = f"{solana_address}\n\n\n[{custom_message}]({link})"
+                            await client.send_message(TARGET_BROADCAST, formatted_message, link_preview=False, parse_mode='markdown')
+
+                            message_sent = True
+                            start_time = time.time()
+                            print(f"Message sent at: {time.strftime('%H:%M:%S', time.localtime(start_time))}")
+                        else:
+                            last_private_message_without_address = message_text
+
+                    if not is_bot and not username and not role and chat_id == LINKED_GROUP_ID:
+                        solana_address = extract_solana_address(message_text)
+                        if solana_address and solana_address not in processed_items:
+                            async for previous_message in client.iter_messages(LINKED_GROUP_ID, limit=5):
+                                if previous_message.message == last_private_message_without_address:
+                                    processed_items.add(solana_address)
+                                    save_processed_items(filename, processed_items)
+
+                                    await client.send_message(TARGET_SOLANA_BOT, solana_address, link_preview=False)
+                                    await client.send_message(TARGET_TRON_BOT, solana_address, link_preview=False)
+
+                                    link = f"{REFERRAL_LINK_BASE}{solana_address}"
+                                    formatted_message = f"{solana_address}\n\n\n[{custom_message}]({link})"
+                                    await client.send_message(TARGET_BROADCAST, formatted_message, link_preview=False, parse_mode='markdown')
+
+                                    message_sent = True
+                                    start_time = time.time()
+                                    print(f"Message sent at: {time.strftime('%H:%M:%S', time.localtime(start_time))}")
+                                    break
+
+            @client.on(events.NewMessage(chats=[TARGET_SOLANA_BOT, TARGET_BROADCAST, TARGET_TRON_BOT]))
+            async def target_message_handler(event):
+                nonlocal stop_time, message_sent
+                if message_sent:
+                    stop_time = time.time()
+                    print(f"Response received at: {time.strftime('%H:%M:%S', time.localtime(stop_time))}")
+                    print(f"Total processing time: {stop_time - start_time:.2f} seconds")
+                    message_sent = False
+                    await asyncio.sleep(10)
+                    last_private_message_without_address = None
+
+            await client.run_until_disconnected()
+        except Exception as e:
+            print(f"Error occurred: {e}")
+            print("Reconnecting in 30 seconds...")
+            await asyncio.sleep(30)
+
+asyncio.run(main())
