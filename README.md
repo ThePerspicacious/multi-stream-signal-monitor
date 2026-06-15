@@ -158,15 +158,23 @@ python monitor.py
 ## Deployment
 
 Deployed on an AWS EC2 Linux instance. Runs detached via tmux, with automatic reconnection on network failures.
+i.e.
+Hosted on an AWS EC2 instance (Ubuntu Linux) , ( Or You can use EC2 Windows/Mac instance too ).
+
+- Connected via SSH, set up the environment manually.
+- Runs detached using tmux — stays alive after terminal closes.
+- Automatic reconnection handles network drops without intervention.
+- No process manager needed — the reconnection loop inside the script handles restarts on its own.
 
 ---
 
 ## What I Learned Building This
 
-- Async event-driven architecture behaves differently from sequential scripts — timing and state management require deliberate design
-- Deduplication across sessions is a different problem from deduplication within a session
-- Real-world data streams are noisy — pattern matching needs to be specific enough to avoid false positives and general enough to catch valid signals
-- Reconnection logic is not optional in production — networks fail
+- Async event-driven architecture behaves differently from sequential scripts — timing and state management require deliberate design.
+- Deduplication across sessions is a different problem from deduplication within a session.
+- Real-world data streams are noisy — pattern matching needs to be specific enough to avoid false positives and general enough to catch valid signals.
+- Reconnection logic is not optional in production — networks fail.
+- Money can be made from automation , just using a bit of critical thinking and with an edge ( better if the edge desgined from scratch by yourself ).
 
 ---
 
